@@ -207,6 +207,9 @@ The following functions are available in Nextflow scripts:
 : Stop the pipeline execution and return an exit code and optional error message.
 
 `file( filePattern, [options] )`
+: :::{versionchanged} 24.11.0-edge
+  The `file()` function should be used only to match a single file. Use `files()` to match a collection of files. In the future, `file()` will raise an error if it does not match exactly one file.
+  :::
 : Get one or more files from a path or glob pattern. Returns a [Path](https://docs.oracle.com/en/java/javase/11/docs/api/java.base/java/nio/file/Path.html) or list of Paths if there are multiple files.
 
 : The following options are available:
