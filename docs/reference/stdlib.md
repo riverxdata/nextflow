@@ -210,7 +210,7 @@ The following functions are available in Nextflow scripts:
 : :::{versionchanged} 24.11.0-edge
   The `file()` function should be used only to match a single file. Use `files()` to match a collection of files. In the future, `file()` will raise an error if it does not match exactly one file.
   :::
-: Get one or more files from a file name or glob pattern. Returns a [Path](#path) if there is one file, or a collection of Paths if there are multiple files.
+: Get one or more files from a file name or glob pattern. Returns a single [Path](#path) if there is one file, or a collection of Paths if there are multiple files.
 
 : The following options are available:
 
