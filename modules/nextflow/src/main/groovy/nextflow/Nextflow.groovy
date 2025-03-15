@@ -57,6 +57,18 @@ class Nextflow {
 
     private static final Random random = new Random()
 
+    /**
+     * Get the value of an environment variable from the launch environment.
+     *
+     * @param name
+     *      The environment variable name to be referenced
+     * @return
+     *      The value associate with the specified variable name or {@code null} if the variable does not exist.
+     */
+    static String env(String name) {
+        return SysEnv.get(name)
+    }
+
     private static List<Path> fileNamePattern( FilePatternSplitter splitter, Map opts ) {
         final scheme = splitter.scheme
         final target = scheme ? "$scheme://$splitter.parent" : splitter.parent
@@ -126,7 +138,11 @@ class Nextflow {
         }
 
         // revolve the glob pattern returning all matches
-        return fileNamePattern(splitter, options)
+        final result = fileNamePattern(splitter, options)
+        if( glob && options?.checkIfExists && result.isEmpty() )
+            throw new NoSuchFileException(path.toString())
+
+        return result
     }
 
     static Collection<Path> files(Map options=null, def filePattern) {
