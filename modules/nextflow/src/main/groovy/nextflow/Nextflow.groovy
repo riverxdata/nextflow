@@ -117,8 +117,8 @@ class Nextflow {
         if( !filePattern )
             throw new IllegalArgumentException("Argument of `file()` function cannot be ${filePattern==null?'null':'empty'}")
         final result = file0(options, filePattern)
-        if( result instanceof Collection && result.size() != 1 )
-            log.warn "The `file()` function was called with a glob pattern that matched a collection of files -- use `files()` instead. The `file()` function should only be used to retrieve a single file. This warning will become an error in the future."
+        if( result instanceof Collection && result.size() != 1 && SysEnv.get('NXF_SYNTAX_PARSER') == 'v2' )
+            log.warn "The `file()` function was called with a glob pattern that matched a collection of files -- use `files()` instead. This warning will become an error in the future."
         return result
     }
 
