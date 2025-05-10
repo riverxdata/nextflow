@@ -57,7 +57,6 @@ import nextflow.ast.TaskCmdXform
 import nextflow.ast.TaskTemplateVarsXform
 import nextflow.cloud.CloudSpotTerminationException
 import nextflow.dag.NodeMarker
-import nextflow.exception.CacheInvalidationException
 import nextflow.exception.FailedGuardException
 import nextflow.exception.IllegalArityException
 import nextflow.exception.MissingFileException
@@ -809,41 +808,9 @@ class TaskProcessor {
                     exists = resumeDir.exists()
 
                 log.trace "[${safeTaskName(task)}] Cacheable folder=${resumeDir?.toUriString()} -- exists=$exists; try=$tries; shouldTryCache=$shouldTryCache; entry=$entry"
-                if( shouldTryCache ) {
-                    if( !entry ) {
-                        final other = session.cache.findTraceRecord { trace ->
-                            trace.get('process') == task.processor.name && trace.get('tag') == task.config.tag.toString()
-                        }
-                        if( other ) {
-                            final hashStr = hash.toString()
-                            final hashLog = "${hashStr[0..<2]}/${hashStr[2..<8]}"
-                            def message = "task hash is different: ${other.get('hash')} -> ${hashLog}"
-
-                            final otherScript = other.get('script') as String
-                            if( task.script != otherScript ) {
-                                message += "\n  script (${other.get('hash')}):"
-                                otherScript.eachLine { line -> message += "\n  ${line}" }
-                                message += "\n  script (${hashLog}):"
-                                task.script.eachLine { line -> message += "\n  ${line}" }
-                            }
-                            throw new CacheInvalidationException(message)
-                        }
-                    }
-
-                    else if( !exists )
-                        throw new CacheInvalidationException("work directory for cached task was not found")
-
-                    else if( !entry.trace.isCompleted() )
-                        throw new CacheInvalidationException("cached task did not complete successfully")
-
-                    else {
-                        checkCachedOutput(task.clone(), resumeDir, hash, entry)
-                        break
-                    }
-                }
-            }
-            catch (CacheInvalidationException e) {
-                log.info "[${safeTaskName(task)}] Cached task must be re-executed -- reason: ${e.message}"
+                final cached = shouldTryCache && exists && entry.trace.isCompleted() && checkCachedOutput(task.clone(), resumeDir, hash, entry)
+                if( cached )
+                    break
             }
             catch (Throwable t) {
                 log.warn1("[${safeTaskName(task)}] Unable to resume cached task -- See log file for details", causedBy: t)
@@ -855,7 +822,7 @@ class TaskProcessor {
             }
 
             if( session.dryRun ) {
-                println "[DRY RUN] new task > ${safeTaskName(task)} [${hash}]"
+                log.info "[DRY RUN] new task > ${safeTaskName(task)} [${hash}]"
                 ChannelEx.update(state) { StateObj it -> it.incCompleted() }
                 break
             }
@@ -940,13 +907,13 @@ class TaskProcessor {
     }
 
     /**
-     * Check whether the outputs of a given task are available. Throw
-     * an excpetion if they are not.
+     * Check whenever the outputs for the specified task already exist
      *
      * @param task The task instance
-     * @param folder The folder where the outputs are stored
+     * @param folder The folder where the outputs are stored (eventually)
+     * @return {@code true} when all outputs are available, {@code false} otherwise
      */
-    final void checkCachedOutput(TaskRun task, Path folder, HashCode hash, TaskEntry entry) {
+    final boolean checkCachedOutput(TaskRun task, Path folder, HashCode hash, TaskEntry entry) {
 
         // check if exists the task exit code file
         def exitCode = null
@@ -957,21 +924,34 @@ class TaskProcessor {
                 str = exitFile.text?.trim()
             }
             catch( IOException e ) {
-                throw new CacheInvalidationException("exitcode file couldn't be read (${exitFile}) -- cause: ${e.message}")
+                log.trace "[${safeTaskName(task)}] Exit file can't be read > $exitFile -- return false -- Cause: ${e.message}"
+                return false
             }
 
             exitCode = str.isInteger() ? str.toInteger() : null
             if( !task.isSuccess(exitCode) ) {
-                throw new CacheInvalidationException("exit code is not valid: ${str}")
+                log.trace "[${safeTaskName(task)}] Exit code is not valid > $str -- return false"
+                return false
             }
         }
 
         /*
          * verify cached context map
          */
-        if( task.hasCacheableValues() && !entry.context ) {
-            throw new CacheInvalidationException("task output variables are missing")
+        if( !entry ) {
+            log.trace "[${safeTaskName(task)}] Missing cache entry -- return false"
+            return false
         }
+
+        if( task.hasCacheableValues() && !entry.context ) {
+            log.trace "[${safeTaskName(task)}] Missing cache context -- return false"
+            return false
+        }
+
+        /*
+         * verify stdout file
+         */
+        final stdoutFile = folder.resolve( TaskRun.CMD_OUTFILE )
 
         if( entry.context != null ) {
             task.context = entry.context
@@ -982,9 +962,7 @@ class TaskProcessor {
         try {
             // -- expose task exit status to make accessible as output value
             task.config.exitStatus = exitCode
-
             // -- check if all output resources are available
-            final stdoutFile = folder.resolve( TaskRun.CMD_OUTFILE )
             collectOutputs(task, folder, stdoutFile, task.context)
 
             // set the exit code in to the task object
@@ -998,13 +976,18 @@ class TaskProcessor {
 
             log.info "[${task.hashLog}] Cached process > ${task.name}"
             // -- notify cached event
-            session.notifyTaskCached(new CachedTaskHandler(task,entry.trace))
+            if( entry )
+                session.notifyTaskCached(new CachedTaskHandler(task,entry.trace))
 
             // -- now bind the results
             finalizeTask0(task)
+            return true
         }
         catch( MissingFileException | MissingValueException e ) {
-            throw new CacheInvalidationException("failed to collect outputs from directory $folder -- cause: ${e.message}")
+            log.trace "[${safeTaskName(task)}] Missed cache > ${e.getMessage()} -- folder: $folder"
+            task.exitStatus = Integer.MAX_VALUE
+            task.workDir = null
+            return false
         }
     }
 

@@ -56,23 +56,17 @@ class DefaultCacheStore implements CacheStore {
     /** The path to the index file */
     private Path indexFile
 
-    /** The path to the index file of the previous run */
-    private Path prevIndexFile
-
     /** Index file read/write handle */
-    private RandomAccessFile writeIndexHandle
+    private RandomAccessFile indexHandle
 
-    private Path readIndexFile
 
-    DefaultCacheStore(UUID uniqueId, String runName, String prevRunName, Path home=null) {
+    DefaultCacheStore(UUID uniqueId, String runName, Path home=null) {
         this.KEY_SIZE = CacheHelper.hasher('x').hash().asBytes().size()
         this.uniqueId = uniqueId
         this.runName = runName
         this.baseDir = home ?: Const.appCacheDir.toAbsolutePath()
         this.dataDir = baseDir.resolve("cache/$uniqueId")
         this.indexFile = dataDir.resolve("index.$runName")
-        if( prevRunName )
-            this.prevIndexFile = dataDir.resolve("index.$prevRunName")
     }
 
     private void openDb() {
@@ -112,9 +106,7 @@ class DefaultCacheStore implements CacheStore {
         openDb()
         //
         indexFile.delete()
-        writeIndexHandle = new RandomAccessFile(indexFile.toFile(), 'rw')
-        if( prevIndexFile?.exists() )
-            readIndexFile = prevIndexFile
+        indexHandle = new RandomAccessFile(indexFile.toFile(), 'rw')
         return this
     }
 
@@ -123,7 +115,7 @@ class DefaultCacheStore implements CacheStore {
         openDb()
         if( !indexFile.exists() )
             throw new AbortOperationException("Missing cache index file: $indexFile")
-        readIndexFile = indexFile
+        indexHandle = new RandomAccessFile(indexFile.toFile(), 'r')
         return this
     }
 
@@ -134,14 +126,14 @@ class DefaultCacheStore implements CacheStore {
 
     @Override
     void close() {
-        writeIndexHandle.closeQuietly()
+        indexHandle.closeQuietly()
         db.closeQuietly()
     }
 
     @Override
     void writeIndex(HashCode key, boolean cached) {
-        writeIndexHandle.write(key.asBytes())
-        writeIndexHandle.writeBoolean(cached)
+        indexHandle.write(key.asBytes())
+        indexHandle.writeBoolean(cached)
     }
 
     @Override
@@ -152,14 +144,10 @@ class DefaultCacheStore implements CacheStore {
     @Override
     Iterator<Index> iterateIndex() {
         return new Iterator<Index>() {
-            private RandomAccessFile handle
             private Index next
 
             {
-                if( readIndexFile ) {
-                    handle = new RandomAccessFile(readIndexFile.toFile(), 'r')
-                    next = fetch()
-                }
+                next = fetch()
             }
 
             @Override
@@ -176,9 +164,9 @@ class DefaultCacheStore implements CacheStore {
 
             private Index fetch() {
                 byte[] key = new byte[KEY_SIZE]
-                if( handle.read(key) == -1 )
+                if( indexHandle.read(key) == -1 )
                     return null
-                final cached = handle.readBoolean()
+                final cached = indexHandle.readBoolean()
                 return new Index (HashCode.fromBytes(key), cached)
             }
         }
